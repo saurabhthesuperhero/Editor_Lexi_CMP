@@ -1,139 +1,190 @@
 package com.example.editorcmp
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.sp
+import java.util.*
 
-sealed class Token {
-    data class Text(var content: String) : Token()
-    data class BoldText(var content: String) : Token()
+data class EditorBlock(
+    val id: String,
+    val type: BlockType,
+    var content: String,
+    val contentStyles: MutableList<String> = mutableListOf()
+)
+
+private const val TAG = "MainActivity"
+
+enum class BlockType {
+    INPUT,
+    BULLET_POINT
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditableTextBlock(token: Token) {
-    var isEditing by remember { mutableStateOf(false) }
-    when (token) {
-        is Token.Text -> {
-            if (isEditing) {
-                TextField(
-                    value = token.content,
-                    onValueChange = { token.content = it },
-                    modifier = Modifier.clickable { isEditing = true },
-                    keyboardOptions = KeyboardOptions.Default.copy(
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { isEditing = false }
-                    )
-                )
-            } else {
-                Text(
-                    text = token.content,
-                    modifier = Modifier.clickable { isEditing = true }
-                )
+fun BlockBasedEditor() {
+    var blocks by remember {
+        mutableStateOf(
+            mutableListOf(
+                EditorBlock(UUID.randomUUID().toString(), BlockType.INPUT, "")
+            )
+        )
+    }
+    val focusRequesters = remember { MutableList(blocks.size) { FocusRequester() } }
+    val focusTrigger = remember { mutableStateOf(0) }
+
+    LaunchedEffect(focusTrigger.value) {
+        focusRequesters.getOrNull(focusTrigger.value)?.requestFocus()
+    }
+
+    LazyColumn {
+        itemsIndexed(blocks) { index, block ->
+            val focusRequester = focusRequesters.getOrNull(index) ?: FocusRequester().also {
+                focusRequesters.add(index, it)
             }
-        }
-        is Token.BoldText -> {
-            if (isEditing) {
-                TextField(
-                    value = token.content,
-                    onValueChange = { token.content = it },
-                    modifier = Modifier.clickable { isEditing = true },
-                    keyboardOptions = KeyboardOptions.Default.copy(
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { isEditing = false }
-                    )
-                )
-            } else {
-                Text(
-                    text = token.content,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable { isEditing = true }
-                )
+
+            Box(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                when (block.type) {
+                    BlockType.INPUT ->
+                        EditorTextField(
+                            block = block,
+                            textStyle = TextStyle(color = Color.Black, fontSize = 16.sp),
+                            onBlockUpdated = {        updatedContent, updatedType ->
+                                val updatedBlock = block.copy(content = updatedContent, type = updatedType)
+                                blocks[index] = updatedBlock
+                            },
+                            onEnterPressed = {
+                                Log.d(TAG, "BlockBasedEditor() called BlockType.INPUT onEnterPressed")
+                                val newBlock = EditorBlock(UUID.randomUUID().toString(), BlockType.INPUT, "")
+                                blocks.add(index + 1, newBlock)
+                                focusRequesters.add(index + 1, FocusRequester())
+                                focusTrigger.value = index + 1
+                            },
+                            focusRequester = focusRequester
+                        )
+
+                    BlockType.BULLET_POINT -> {
+                        Row(
+                            horizontalArrangement = Arrangement.Start,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+//                            Text("•", style = TextStyle(fontSize = 16.sp))
+                            EditorTextField(
+                                block = block,
+                                textStyle = TextStyle(color = Color.Black, fontSize = 16.sp),
+                                onBlockUpdated = {
+                                    updatedContent, updatedType ->
+                                    val updatedBlock = block.copy(content = updatedContent, type = updatedType)
+                                    blocks[index] = updatedBlock
+                                },
+                                onEnterPressed = {
+                                    Log.d(TAG, "BlockBasedEditor() called BlockType.BULLET_POINT onEnterPressed")
+                                    if (block.content.trim() == "-") {
+                                        // If only "-" is there, then create a new block
+                                        val newBlock = EditorBlock(UUID.randomUUID().toString(), BlockType.INPUT, "")
+                                        blocks.add(index + 1, newBlock)
+                                        focusRequesters.add(index + 1, FocusRequester())
+                                        focusTrigger.value = index + 1
+                                    } else {
+                                        // Add a new bullet point in the same block
+                                        block.content = "${block.content}\n- "
+                                        blocks[index] = block
+                                    }
+                                },
+                                focusRequester = focusRequester
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun EditorWithLexing() {
-    var text by remember { mutableStateOf("Type *bold* text here") }
-    val tokens = lex(text)
+fun EditorTextField(
+    block: EditorBlock,
+    textStyle: TextStyle,
+    onBlockUpdated: (String, BlockType) -> Unit,
+    onEnterPressed: () -> Unit,
+    focusRequester: FocusRequester
+) {
+    var text by remember { mutableStateOf(block.content) }
+    var updatedType by remember { mutableStateOf(block.type) }  // Add this line
 
-    val keyboardController = LocalSoftwareKeyboardController.current
+    // Keep 'text' and 'block.content' in sync
+    LaunchedEffect(block.content) {
+        text = block.content
+    }
 
     BasicTextField(
         value = text,
-        onValueChange = { text = it },
+        onValueChange = { newValue ->
+            text = newValue
+
+            if (newValue.startsWith("- ") && updatedType != BlockType.BULLET_POINT) {
+                updatedType = BlockType.BULLET_POINT
+            }
+
+            if (newValue.endsWith("\n")) {
+                text = newValue.removeSuffix("\n")
+                if (updatedType == BlockType.BULLET_POINT) {  // Change this line
+                    if (newValue.trim() == "-") {
+                        updatedType = BlockType.INPUT
+                        onEnterPressed()
+                    } else {
+                        val updatedContent = "$text- "
+                        text = updatedContent
+                    }
+                } else {
+                    onEnterPressed()
+                }
+            }
+            onBlockUpdated(text, updatedType)
+        },
+        textStyle = textStyle,
         keyboardOptions = KeyboardOptions.Default.copy(
-            imeAction = ImeAction.Done
+            imeAction = ImeAction.Default
         ),
         keyboardActions = KeyboardActions(
             onDone = {
-                keyboardController?.hide()
+                onEnterPressed()
             }
-        )
+        ),
+        modifier = Modifier
+            .focusRequester(focusRequester)
+            .fillMaxWidth()
     )
-
-    Column {
-        tokens.forEach { token ->
-            EditableTextBlock(token)
-        }
-    }
 }
 
-fun lex(input: String): List<Token> {
-    val tokens = mutableListOf<Token>()
-    var buffer = StringBuilder()
-    var isBold = false
-
-    for (char in input) {
-        when (char) {
-            '*' -> {
-                if (isBold) {
-                    tokens.add(Token.BoldText(buffer.toString()))
-                } else {
-                    tokens.add(Token.Text(buffer.toString()))
-                }
-                buffer.clear()
-                isBold = !isBold
-            }
-            else -> {
-                buffer.append(char)
-            }
-        }
-    }
-
-    if (buffer.isNotEmpty()) {
-        tokens.add(if (isBold) Token.BoldText(buffer.toString()) else Token.Text(buffer.toString()))
-    }
-
-    return tokens
-}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            EditorWithLexing()
+
+            BlockBasedEditor()
         }
     }
 }
